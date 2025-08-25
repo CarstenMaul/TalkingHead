@@ -17,13 +17,15 @@
     {
       "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js/+esm",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-      "talkinghead": "https://cdn.jsdelivr.net/gh/met4citizen/TalkingHead@1.5/modules/talkinghead.mjs"
+      "talkinghead": "../modules/talkinghead.mjs",
+      "config": "./config.js"
     }
   }
   </script>
 
   <script type="module">
     import { TalkingHead } from "talkinghead";
+    import { config } from "config";
 
     let head;
 
@@ -35,7 +37,7 @@
       const nodeAvatar = document.getElementById('avatar');
       head = new TalkingHead( nodeAvatar, {
         ttsEndpoint: "https://eu-texttospeech.googleapis.com/v1beta1/text:synthesize",
-        ttsApikey: "put-your-own-Google-TTS-API-key-here", // <- Change this
+        ttsApikey: config.ttsApikey,
         lipsyncModules: ["en", "fi","de"],
         cameraView: "upper"
       });
