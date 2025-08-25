@@ -3373,9 +3373,8 @@ class TalkingHead {
           this.animQueue.push( this.animFactory( faceTemplate ) );
         }
 
-        // Continue without interrupting speech flow
-        let duration = line.emoji.dt.reduce((a,b) => a+b,0);
-        setTimeout( this.startSpeaking.bind(this), Math.min(duration, 500), true );
+        // Continue immediately without pausing speech flow
+        this.startSpeaking();
       } else if ( line.break ) {
         // Break
         setTimeout( this.startSpeaking.bind(this), line.break, true );
