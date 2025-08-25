@@ -757,6 +757,19 @@ class TalkingHead {
     this.bodyOnlyProps = ['gesture', 'bodyRotateX', 'bodyRotateY', 'bodyRotateZ', 'handLeft', 'handRight', 'handFistLeft', 'handFistRight'];
     this.faceBlockingProps = ['mouth', 'jaw', 'viseme_', 'tongue']; // Properties that interfere with lipsync
     this.faceSafeProps = ['eyeContact', 'headMove', 'headRotateX', 'headRotateY', 'headRotateZ', 'pose', 'eyeBlinkLeft', 'eyeBlinkRight', 'bodyRotateX', 'bodyRotateZ']; // Can coexist with speech
+    
+    // Pre-computed body-only versions of common gesture emojis for fast processing
+    this.fastBodyGestures = {
+      '👉': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["pointright",2],null] } },
+      '👈': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["pointleft",2],null] } },
+      '👋': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
+      '✋': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
+      '🤚': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2],null] } },
+      '👍': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["thumbup",2],null] } },
+      '👌': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["ok",2],null] } },
+      '🤷‍♂️': { dt: [1000,1500], rescale: [0,1], vs: { gesture: [["shrug",2],null] } },
+      '🙏': { dt: [1500,300,1000], rescale: [0,1,0], vs: { bodyRotateX: [0], bodyRotateZ: [0.1], gesture: [["namaste",2],null] } }
+    };
 
     // Clock
     this.animFrameDur = 1000/ this.opt.modelFPS;
@@ -3021,7 +3034,7 @@ class TalkingHead {
           let emoji = this.animEmojis[letters[i]];
           if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
           if ( emoji ) {
-            this.speechQueue.push( { emoji: emoji } );
+            this.speechQueue.push( { emoji: emoji, emojiChar: letters[i] } );
           }
         }
 
@@ -3358,25 +3371,30 @@ class TalkingHead {
       let line = this.speechQueue.shift();
       if ( line.emoji ) {
 
-        // Process emoji asynchronously to avoid blocking speech
-        setTimeout(() => {
-          // Split emoji animation into body and face components
-          const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
-          
-          // Add body animation to gesture queue (runs in parallel)
-          if ( Object.keys(bodyTemplate.vs).length > 0 ) {
-            this.gestureQueue.push( this.animFactory( bodyTemplate ) );
-          }
-          
-          // Add face animation to main queue if not speaking, otherwise skip facial parts
-          if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
-            // Look at the camera for face animations only
-            this.lookAtCamera(500);
-            this.animQueue.push( this.animFactory( faceTemplate ) );
-          }
-        }, 0);
+        // Check if this is a common body gesture that we can process ultra-fast
+        const emojiChar = line.emojiChar;
+        const fastBodyGesture = this.fastBodyGestures[emojiChar];
+        
+        if ( fastBodyGesture ) {
+          // Ultra-fast path: directly add pre-computed body gesture
+          this.gestureQueue.push( this.animFactory( fastBodyGesture ) );
+        } else {
+          // Fallback to slower splitting for complex emojis
+          setTimeout(() => {
+            const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
+            
+            if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+              this.gestureQueue.push( this.animFactory( bodyTemplate ) );
+            }
+            
+            if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
+              this.lookAtCamera(500);
+              this.animQueue.push( this.animFactory( faceTemplate ) );
+            }
+          }, 0);
+        }
 
-        // Continue immediately to process next item in queue without waiting for animation setup
+        // Continue immediately to process next item in queue
         this.startSpeaking(true);
       } else if ( line.break ) {
         // Break
