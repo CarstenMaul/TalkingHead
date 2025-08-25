@@ -3358,22 +3358,25 @@ class TalkingHead {
       let line = this.speechQueue.shift();
       if ( line.emoji ) {
 
-        // Split emoji animation into body and face components
-        const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
-        
-        // Add body animation to gesture queue (runs in parallel)
-        if ( Object.keys(bodyTemplate.vs).length > 0 ) {
-          this.gestureQueue.push( this.animFactory( bodyTemplate ) );
-        }
-        
-        // Add face animation to main queue if not speaking, otherwise skip facial parts
-        if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
-          // Look at the camera for face animations only
-          this.lookAtCamera(500);
-          this.animQueue.push( this.animFactory( faceTemplate ) );
-        }
+        // Process emoji asynchronously to avoid blocking speech
+        setTimeout(() => {
+          // Split emoji animation into body and face components
+          const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
+          
+          // Add body animation to gesture queue (runs in parallel)
+          if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+            this.gestureQueue.push( this.animFactory( bodyTemplate ) );
+          }
+          
+          // Add face animation to main queue if not speaking, otherwise skip facial parts
+          if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
+            // Look at the camera for face animations only
+            this.lookAtCamera(500);
+            this.animQueue.push( this.animFactory( faceTemplate ) );
+          }
+        }, 0);
 
-        // Continue immediately to process next item in queue
+        // Continue immediately to process next item in queue without waiting for animation setup
         this.startSpeaking(true);
       } else if ( line.break ) {
         // Break
