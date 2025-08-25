@@ -749,8 +749,14 @@ class TalkingHead {
 
     // Anim queues
     this.animQueue = [];
+    this.gestureQueue = [];
     this.animClips = [];
     this.animPoses = [];
+    
+    // Animation property classification for parallel processing
+    this.bodyOnlyProps = ['gesture', 'bodyRotateX', 'bodyRotateY', 'bodyRotateZ', 'handLeft', 'handRight', 'handFistLeft', 'handFistRight'];
+    this.faceBlockingProps = ['mouth', 'jaw', 'viseme_', 'tongue']; // Properties that interfere with lipsync
+    this.faceSafeProps = ['eyeContact', 'headMove', 'headRotateX', 'headRotateY', 'headRotateZ', 'pose', 'eyeBlinkLeft', 'eyeBlinkRight', 'bodyRotateX', 'bodyRotateZ']; // Can coexist with speech
 
     // Clock
     this.animFrameDur = 1000/ this.opt.modelFPS;
@@ -2145,6 +2151,61 @@ class TalkingHead {
 
 
   /**
+   * Check if an animation property is body-only (gestures, body movement)
+   * @param {string} prop Animation property name
+   * @return {boolean} True if body-only property
+   */
+  isBodyOnlyProperty(prop) {
+    return this.bodyOnlyProps.some(bp => prop.startsWith(bp));
+  }
+
+  /**
+   * Check if an animation property blocks facial expressions (mouth, jaw)
+   * @param {string} prop Animation property name
+   * @return {boolean} True if face-blocking property
+   */
+  isFaceBlockingProperty(prop) {
+    return this.faceBlockingProps.some(fp => prop.includes(fp));
+  }
+
+  /**
+   * Check if an animation property is safe to use with speech (eyes, head)
+   * @param {string} prop Animation property name
+   * @return {boolean} True if face-safe property
+   */
+  isFaceSafeProperty(prop) {
+    return this.faceSafeProps.some(fp => prop.startsWith(fp));
+  }
+
+  /**
+   * Split animation template into body and face components
+   * @param {Object} template Animation template
+   * @return {Object} Object with bodyTemplate and faceTemplate properties
+   */
+  splitAnimationTemplate(template) {
+    const bodyTemplate = { ...template, vs: {} };
+    const faceTemplate = { ...template, vs: {} };
+    
+    if (template.vs) {
+      for (const [prop, values] of Object.entries(template.vs)) {
+        if (this.isBodyOnlyProperty(prop) || (this.isFaceSafeProperty(prop) && !this.isFaceBlockingProperty(prop))) {
+          bodyTemplate.vs[prop] = values;
+        } else if (this.isFaceBlockingProperty(prop)) {
+          // Face-blocking properties only go to face template when not speaking
+          if (!this.isSpeaking) {
+            faceTemplate.vs[prop] = values;
+          }
+        } else {
+          // Default: other properties can go to both (like eye movements)
+          faceTemplate.vs[prop] = values;
+        }
+      }
+    }
+    
+    return { bodyTemplate, faceTemplate };
+  }
+
+  /**
   * Create a new animation based on an animation template.
   * @param {Object} t Animation template
   * @param {number} [loop=false] Number of loops, false if not looped
@@ -2413,10 +2474,12 @@ class TalkingHead {
       }
     }
 
-    // Animation loop
+    // Animation loop - process both face/speech and body gesture queues
     let isEyeContact = null;
     let isHeadMove = null;
     const tasks = [];
+    
+    // Process main animation queue (face/speech animations)
     for( i=0, l=this.animQueue.length; i<l; i++ ) {
       const x = this.animQueue[i];
       if ( this.animClock < x.ts[0] ) continue;
@@ -2493,7 +2556,62 @@ class TalkingHead {
       } else {
         x.ndx = j - 1;
       }
+    }
 
+    // Process gesture queue (body animations) - runs in parallel to face animations
+    for( i=0, l=this.gestureQueue.length; i<l; i++ ) {
+      const x = this.gestureQueue[i];
+      if ( this.animClock < x.ts[0] ) continue;
+
+      for( j = x.ndx || 0, k = x.ts.length; j<k; j++ ) {
+        if ( this.animClock < x.ts[j] ) break;
+
+        for( let [mt,vs] of Object.entries(x.vs) ) {
+
+          if ( this.mtAvatar.hasOwnProperty(mt) ) {
+            if ( vs[j+1] === null ) continue; // Last or unknown target, skip
+
+            // Start value and target
+            const m = this.mtAvatar[mt];
+            if ( vs[j] === null ) vs[j] = m.value; // Fill-in start value
+            if ( j === k - 1 ) {
+              m.newvalue = vs[j];
+            } else {
+              m.newvalue = vs[j+1];
+              const tdiff = x.ts[j+1] - x.ts[j];
+              let alpha = 1;
+              if ( tdiff > 0.0001 ) alpha = (this.animClock - x.ts[j]) / tdiff;
+              if ( alpha < 1 ) {
+                if ( m.easing ) alpha = m.easing(alpha);
+                m.newvalue = ( 1 - alpha ) * vs[j] + alpha * m.newvalue;
+              }
+              if ( m.ref && m.ref !== x.vs && m.ref.hasOwnProperty(mt) ) delete m.ref[mt];
+              m.ref = x.vs;
+            }
+
+            // Update
+            m.needsUpdate = true;
+
+          } else if ( vs[j] !== null ) {
+            tasks.push({ mt: mt, val: vs[j] });
+            vs[j] = null;
+          }
+
+        }
+
+      }
+
+      // If end timeslot, loop or remove the gesture animation, otherwise keep at it
+      if ( j === k ) {
+        if ( x.loop ) {
+          this.gestureQueue[i] = this.animFactory( x.template, (x.loop > 0 ? x.loop - 1 : x.loop) );
+        } else {
+          this.gestureQueue.splice(i--, 1);
+          l--;
+        }
+      } else {
+        x.ndx = j - 1;
+      }
     }
 
     // Tasks
@@ -2933,6 +3051,22 @@ class TalkingHead {
   }
 
   /**
+  * Play gesture emoji immediately in parallel with speech (body movements only).
+  * @param {string} em Emoji.
+  */
+  async playGestureEmoji(em) {
+    let emoji = this.animEmojis[em];
+    if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
+    if ( emoji ) {
+      // Split and play only body components immediately
+      const { bodyTemplate } = this.splitAnimationTemplate( emoji );
+      if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+        this.gestureQueue.push( this.animFactory( bodyTemplate ) );
+      }
+    }
+  }
+
+  /**
   * Add a break to the speech queue.
   * @param {numeric} t Duration in milliseconds.
   */
@@ -3224,13 +3358,24 @@ class TalkingHead {
       let line = this.speechQueue.shift();
       if ( line.emoji ) {
 
-        // Look at the camera
-        this.lookAtCamera(500);
+        // Split emoji animation into body and face components
+        const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
+        
+        // Add body animation to gesture queue (runs in parallel)
+        if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+          this.gestureQueue.push( this.animFactory( bodyTemplate ) );
+        }
+        
+        // Add face animation to main queue if not speaking, otherwise skip facial parts
+        if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
+          // Look at the camera for face animations only
+          this.lookAtCamera(500);
+          this.animQueue.push( this.animFactory( faceTemplate ) );
+        }
 
-        // Only emoji
+        // Continue without interrupting speech flow
         let duration = line.emoji.dt.reduce((a,b) => a+b,0);
-        this.animQueue.push( this.animFactory( line.emoji ) );
-        setTimeout( this.startSpeaking.bind(this), duration, true );
+        setTimeout( this.startSpeaking.bind(this), Math.min(duration, 500), true );
       } else if ( line.break ) {
         // Break
         setTimeout( this.startSpeaking.bind(this), line.break, true );
@@ -4417,36 +4562,69 @@ class TalkingHead {
       }
 
       if ( em ) {
-        // Look at the camera for 500 ms
-        this.lookAtCamera(500);
+        // Split emoji animation into body and face components
+        const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( em );
+        
+        // Create and process body animation (gestures)
+        if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+          const bodyAnim = this.animFactory( bodyTemplate );
+          bodyAnim.gesture = true;
+          
+          // Rescale duration for body animation
+          if ( dur && Number.isFinite(dur) ) {
+            const first = bodyAnim.ts[0];
+            const last = bodyAnim.ts[ bodyAnim.ts.length -1 ];
+            const total = last - first;
+            const excess = (dur * 1000) - total;
 
-        // Create animation and tag as gesture
-        const anim = this.animFactory( em );
-        anim.gesture = true;
-
-        // Rescale duration
-        if ( dur && Number.isFinite(dur) ) {
-          const first = anim.ts[0];
-          const last = anim.ts[ anim.ts.length -1 ];
-          const total = last - first;
-          const excess = (dur * 1000) - total;
-
-          // If longer, increase longer parts; if shorter, scale everything
-          if ( excess > 0 ) {
-            const dt = [];
-            for( let i=1; i<anim.ts.length; i++ ) dt.push( anim.ts[i] - anim.ts[i-1] );
-            const rescale = em.template?.rescale || dt.map( x => x / total );
-            const excess = dur * 1000 - total;
-            anim.ts = anim.ts.map( (x,i,arr) => {
-              return (i===0) ? first : (arr[i-1] + dt[i-1] + rescale[i-1] * excess);
-            });
-          } else {
-            const scale = (dur * 1000) / total;
-            anim.ts = anim.ts.map( x => first + scale * (x - first) );
+            // If longer, increase longer parts; if shorter, scale everything
+            if ( excess > 0 ) {
+              const dt = [];
+              for( let i=1; i<bodyAnim.ts.length; i++ ) dt.push( bodyAnim.ts[i] - bodyAnim.ts[i-1] );
+              const rescale = bodyTemplate?.rescale || dt.map( x => x / total );
+              const excess = dur * 1000 - total;
+              bodyAnim.ts = bodyAnim.ts.map( (x,i,arr) => {
+                return (i===0) ? first : (arr[i-1] + dt[i-1] + rescale[i-1] * excess);
+              });
+            } else {
+              const scale = (dur * 1000) / total;
+              bodyAnim.ts = bodyAnim.ts.map( x => first + scale * (x - first) );
+            }
           }
+          
+          this.gestureQueue.push( bodyAnim );
         }
+        
+        // Create and process face animation (if not speaking)
+        if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
+          // Look at the camera for face animations only
+          this.lookAtCamera(500);
+          
+          const faceAnim = this.animFactory( faceTemplate );
+          
+          // Rescale duration for face animation
+          if ( dur && Number.isFinite(dur) ) {
+            const first = faceAnim.ts[0];
+            const last = faceAnim.ts[ faceAnim.ts.length -1 ];
+            const total = last - first;
+            const excess = (dur * 1000) - total;
 
-        this.animQueue.push( anim );
+            if ( excess > 0 ) {
+              const dt = [];
+              for( let i=1; i<faceAnim.ts.length; i++ ) dt.push( faceAnim.ts[i] - faceAnim.ts[i-1] );
+              const rescale = faceTemplate?.rescale || dt.map( x => x / total );
+              const excess = dur * 1000 - total;
+              faceAnim.ts = faceAnim.ts.map( (x,i,arr) => {
+                return (i===0) ? first : (arr[i-1] + dt[i-1] + rescale[i-1] * excess);
+              });
+            } else {
+              const scale = (dur * 1000) / total;
+              faceAnim.ts = faceAnim.ts.map( x => first + scale * (x - first) );
+            }
+          }
+          
+          this.animQueue.push( faceAnim );
+        }
       }
     }
 
@@ -4482,6 +4660,9 @@ class TalkingHead {
     if ( i !== -1 ) {
       this.animQueue.splice(i, 1);
     }
+    
+    // Clear gesture queue
+    this.gestureQueue = this.gestureQueue.filter( y => !y.gesture );
 
   }
 

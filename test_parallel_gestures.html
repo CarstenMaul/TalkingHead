@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Parallel Gesture Animation Test</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>Parallel Body Animation Test</h3>
+        
+        <div>
+            <button onclick="testSpeechWithGestures()">Test: Speech + Gestures</button>
+            <button onclick="testGestureEmojis()">Test: Gesture Emojis</button>
+            <button onclick="testDirectGestures()">Test: Direct Gestures</button>
+        </div>
+        
+        <div style="margin-top: 10px;">
+            <button onclick="avatar.playGestureEmoji('👋')">👋 Wave</button>
+            <button onclick="avatar.playGestureEmoji('👍')">👍 Thumbs Up</button>
+            <button onclick="avatar.playGestureEmoji('👉')">👉 Point Right</button>
+            <button onclick="avatar.playGestureEmoji('👈')">👈 Point Left</button>
+            <button onclick="avatar.playGestureEmoji('🤷‍♂️')">🤷‍♂️ Shrug</button>
+            <button onclick="avatar.playGestureEmoji('🙏')">🙏 Pray</button>
+        </div>
+        
+        <div style="margin-top: 10px;">
+            <button onclick="avatar.stopGesture()">Stop Gestures</button>
+            <button onclick="avatar.stopSpeaking()">Stop Speech</button>
+        </div>
+        
+        <div style="margin-top: 10px; font-size: 12px;">
+            <div>Animation Queues:</div>
+            <div>Face Queue: <span id="faceQueueCount">0</span></div>
+            <div>Gesture Queue: <span id="gestureQueueCount">0</span></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { TalkingHead } from './modules/talkinghead.mjs';
+        
+        let avatar;
+        
+        async function init() {
+            try {
+                const nodeAvatar = new TalkingHead(document.body, {
+                    ttsEndpoint: "",
+                    ttsApikey: "",
+                    cameraX: 0,
+                    cameraY: 0, 
+                    cameraDistance: 1.5,
+                    modelPixelRatio: 1,
+                    modelFPS: 25,
+                    faceTrackGain: 0.5,
+                    lipsyncLang: 'en'
+                });
+
+                await nodeAvatar.showAvatar({
+                    url: './assets/models/model.glb',
+                    body: 'F',
+                    lipsyncLang: 'en'
+                });
+                
+                // Make avatar globally accessible for testing
+                window.avatar = nodeAvatar;
+                console.log("Avatar loaded successfully");
+                
+                // Start animation loop monitoring
+                setInterval(updateQueueCounts, 100);
+                
+            } catch (error) {
+                console.error('Error loading avatar:', error);
+            }
+        }
+        
+        function updateQueueCounts() {
+            if (window.avatar) {
+                document.getElementById('faceQueueCount').textContent = avatar.animQueue.length;
+                document.getElementById('gestureQueueCount').textContent = avatar.gestureQueue.length;
+            }
+        }
+        
+        window.testSpeechWithGestures = function() {
+            console.log("Testing speech with gestures...");
+            avatar.speakText("Hello there! 👋 I can now speak and gesture at the same time! 👍 This is amazing! 👉 Watch me point while talking! 🤷‍♂️");
+        };
+        
+        window.testGestureEmojis = function() {
+            console.log("Testing gesture emojis during speech...");
+            avatar.speakText("I'm speaking now");
+            setTimeout(() => avatar.playGestureEmoji('👋'), 500);
+            setTimeout(() => avatar.playGestureEmoji('👍'), 1500);
+            setTimeout(() => avatar.playGestureEmoji('👉'), 2500);
+        };
+        
+        window.testDirectGestures = function() {
+            console.log("Testing direct gestures...");
+            avatar.gesture('👋', 3);
+            setTimeout(() => avatar.gesture('👍', 2), 1000);
+            setTimeout(() => avatar.gesture('🤷‍♂️', 3), 2000);
+        };
+        
+        init();
+    </script>
+</body>
+</html>
