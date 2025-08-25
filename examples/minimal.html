@@ -39,7 +39,27 @@
         ttsEndpoint: "https://eu-texttospeech.googleapis.com/v1beta1/text:synthesize",
         ttsApikey: config.ttsApikey,
         lipsyncModules: ["en", "fi","de"],
-        cameraView: "upper"
+        cameraView: "upper",
+        cameraRotateEnable: false,
+        cameraDistance: 0.3,
+        cameraY: 0.2,
+        
+        // Enhanced lighting for realism
+        lightAmbientIntensity: 1.2,        // Softer ambient light
+        lightDirectColor: 0xffffff,        // Pure white directional light
+        lightDirectIntensity: 18,          // Reduced intensity
+        lightDirectPhi: 0.8,               // Better angle for face lighting
+        lightDirectTheta: 1.5,
+        
+        // Add spot light for depth
+        lightSpotIntensity: 10,            // Reduced spot lighting
+        lightSpotColor: 0xffffee,          // Warm white
+        lightSpotPhi: 0.3,
+        lightSpotTheta: 3.5,
+        lightSpotDispersion: 0.8,
+        
+        // Higher quality rendering
+        modelPixelRatio: 1.5               // Increase resolution
       });
 
       // Load and show the avatar
