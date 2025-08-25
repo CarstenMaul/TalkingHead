@@ -3373,8 +3373,8 @@ class TalkingHead {
           this.animQueue.push( this.animFactory( faceTemplate ) );
         }
 
-        // Continue immediately without pausing speech flow (minimal delay to prevent stack issues)
-        setTimeout( this.startSpeaking.bind(this), 0, true );
+        // Continue immediately to process next item in queue
+        this.startSpeaking(true);
       } else if ( line.break ) {
         // Break
         setTimeout( this.startSpeaking.bind(this), line.break, true );
