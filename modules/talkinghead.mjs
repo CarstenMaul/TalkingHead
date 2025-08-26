@@ -2198,6 +2198,7 @@ class TalkingHead {
    * @param {Array} wdurations Array of word durations in milliseconds
    */
   scheduleEmojiGestures(emojiTimingMap, words, wtimes, wdurations) {
+    console.log('scheduleEmojiGestures called:', { emojiTimingMap, words, wtimes, wdurations });
     emojiTimingMap.forEach(emojiData => {
       const { emoji, emojiChar, wordIndex, position } = emojiData;
       
@@ -2217,12 +2218,15 @@ class TalkingHead {
       
       // Schedule gesture animation
       const delay = Math.max(0, triggerTime - 50); // Start slightly before the trigger point
+      console.log(`Scheduling ${emojiChar} gesture for word ${wordIndex} with delay ${delay}ms, triggerTime: ${triggerTime}`);
       setTimeout(() => {
+        console.log(`Triggering ${emojiChar} gesture now`);
         // Check if we have a fast gesture
         const fastBodyGesture = this.fastBodyGestures[emojiChar];
         
         if (fastBodyGesture) {
           // Ultra-fast path for common gestures
+          console.log(`Adding fast gesture ${emojiChar} to queue`);
           this.gestureQueue.push(this.animFactory(fastBodyGesture));
         } else {
           // Fallback to splitting for complex emojis
@@ -3067,7 +3071,10 @@ class TalkingHead {
             anim: lipsyncAnim
           };
           if ( onsubtitles ) o.onSubtitles = onsubtitles;
-          if ( emojiTimingMap.length ) o.emojiTimingMap = [...emojiTimingMap]; // Pass emoji timing data
+          if ( emojiTimingMap.length ) {
+            console.log('Adding emoji timing map to speech queue:', emojiTimingMap);
+            o.emojiTimingMap = [...emojiTimingMap]; // Pass emoji timing data
+          }
           if ( ttsSentence.length && !opt.avatarMute ) {
             o.text = ttsSentence;
             if ( opt.avatarMood ) o.mood = opt.avatarMood;
@@ -3093,6 +3100,7 @@ class TalkingHead {
           let emoji = this.animEmojis[letters[i]];
           if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
           if ( emoji ) {
+            console.log(`Tracking emoji ${letters[i]} at word index ${wordIndex}`);
             emojiTimingMap.push({
               emoji: emoji,
               emojiChar: letters[i],
@@ -3346,6 +3354,7 @@ class TalkingHead {
     }
 
     // Process emoji timing synchronization
+    console.log('Processing emoji timing:', { hasMap: !!r.emojiTimingMap, mapLength: r.emojiTimingMap?.length, hasWords: !!r.words, hasWtimes: !!r.wtimes });
     if ( r.emojiTimingMap && r.emojiTimingMap.length && r.words && r.wtimes ) {
       this.scheduleEmojiGestures(r.emojiTimingMap, r.words, r.wtimes, r.wdurations);
     }
