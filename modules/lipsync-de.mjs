@@ -168,10 +168,16 @@ class LipsyncDe {
       // Normalize spacing
       .replace(/\s+/g, ' ')
       
-      // Remove non-German diacritics while preserving umlauts
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .normalize('NFC')
+      // Preserve German umlauts and normalize other diacritics
+      .replace(/[àáâãå]/g, 'a')
+      .replace(/[èéêë]/g, 'e') 
+      .replace(/[ìíîï]/g, 'i')
+      .replace(/[òóôõ]/g, 'o')
+      .replace(/[ùúû]/g, 'u')
+      .replace(/[ýÿ]/g, 'y')
+      .replace(/[ç]/g, 'c')
+      .replace(/[ñ]/g, 'n')
+      // Keep German umlauts ä, ö, ü, ß unchanged
       .trim();
 
     return r;
