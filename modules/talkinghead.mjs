@@ -3560,6 +3560,38 @@ class TalkingHead {
             if ( d > this.opt.ttsTrimEnd ) d = d - this.opt.ttsTrimEnd; // Trim out silence at the end
             timepoints[timepoints.length-1].duration = d - timepoints[timepoints.length-1].time;
 
+            // Schedule emoji gestures based on word timing
+            if (line.emojiTimingMap) {
+              console.log('Scheduling emoji gestures with timepoints:', { timepoints, emojiMap: line.emojiTimingMap, words: line.text });
+              line.emojiTimingMap.forEach(emojiData => {
+                const { emoji, emojiChar, wordIndex } = emojiData;
+                
+                // Map wordIndex to timepoint (each word gets a mark)
+                if (wordIndex < timepoints.length) {
+                  const timepoint = timepoints[wordIndex];
+                  // Trigger gesture slightly after word starts
+                  const triggerTime = timepoint.time + (timepoint.duration * 0.7); // 70% through the word
+                  
+                  console.log(`Scheduling ${emojiChar} at ${triggerTime}ms (word ${wordIndex})`);
+                  setTimeout(() => {
+                    console.log(`Triggering ${emojiChar} gesture now`);
+                    const fastBodyGesture = this.fastBodyGestures[emojiChar];
+                    
+                    if (fastBodyGesture) {
+                      console.log(`Adding fast gesture ${emojiChar} to queue`);
+                      this.gestureQueue.push(this.animFactory(fastBodyGesture));
+                    } else {
+                      const { bodyTemplate } = this.splitAnimationTemplate(emoji);
+                      if (Object.keys(bodyTemplate.vs).length > 0) {
+                        console.log(`Adding body template gesture ${emojiChar} to queue`);
+                        this.gestureQueue.push(this.animFactory(bodyTemplate));
+                      }
+                    }
+                  }, triggerTime + this.opt.ttsTrimStart);
+                }
+              });
+            }
+
             // Re-set animation starting times and rescale durations
             line.anim.forEach( x => {
               const timepoint = timepoints[x.mark];
@@ -3571,7 +3603,12 @@ class TalkingHead {
             });
 
             // Add to the playlist
-            this.audioPlaylist.push({ anim: line.anim, audio: audio });
+            const playlistItem = { anim: line.anim, audio: audio };
+            if (line.emojiTimingMap) {
+              console.log('Adding emoji timing map to playlist item:', line.emojiTimingMap);
+              playlistItem.emojiTimingMap = line.emojiTimingMap;
+            }
+            this.audioPlaylist.push(playlistItem);
             this.onSubtitles = line.onSubtitles || null;
             this.resetLips();
             if ( line.mood ) this.setMood( line.mood );
