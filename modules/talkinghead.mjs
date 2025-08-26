@@ -3013,6 +3013,21 @@ class TalkingHead {
         }
       }
 
+      // Track emoji position for timing sync (runs in main character loop)
+      if ( isEmoji ) {
+        let emoji = this.animEmojis[letters[i]];
+        if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
+        if ( emoji ) {
+          console.log(`Tracking emoji ${letters[i]} at global word index ${globalWordIndex}`);
+          emojiTimingMap.push({
+            emoji: emoji,
+            emojiChar: letters[i],
+            wordIndex: globalWordIndex, // Position relative to global word index
+            position: 'after' // Emoji appears after this word index
+          });
+        }
+      }
+
       // Add words to sentence and animations
       if ( isEndOfWord || isEndOfSentence || isLast ) {
 
@@ -3104,20 +3119,6 @@ class TalkingHead {
           wordIndex = 0; // Reset word index for next sentence
         }
 
-        // Track emoji position for timing sync (don't add to speech queue to avoid interruptions)
-        if ( isEmoji ) {
-          let emoji = this.animEmojis[letters[i]];
-          if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
-          if ( emoji ) {
-            console.log(`Tracking emoji ${letters[i]} at global word index ${globalWordIndex}`);
-            emojiTimingMap.push({
-              emoji: emoji,
-              emojiChar: letters[i],
-              wordIndex: globalWordIndex, // Position relative to global word index
-              position: 'after' // Emoji appears after this word index
-            });
-          }
-        }
 
         this.speechQueue.push( { break: 100 } );
 
