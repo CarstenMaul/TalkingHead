@@ -2191,6 +2191,59 @@ class TalkingHead {
   }
 
   /**
+   * Schedule emoji gestures based on word timing data from TTS
+   * @param {Array} emojiTimingMap Array of emoji objects with word positions
+   * @param {Array} words Array of words from TTS response
+   * @param {Array} wtimes Array of word start times in milliseconds
+   * @param {Array} wdurations Array of word durations in milliseconds
+   */
+  scheduleEmojiGestures(emojiTimingMap, words, wtimes, wdurations) {
+    emojiTimingMap.forEach(emojiData => {
+      const { emoji, emojiChar, wordIndex, position } = emojiData;
+      
+      // Calculate timing based on word position
+      let triggerTime;
+      if (position === 'after' && wordIndex < words.length) {
+        // Trigger after the specified word finishes
+        triggerTime = wtimes[wordIndex] + wdurations[wordIndex];
+      } else if (wordIndex < words.length) {
+        // Trigger at the start of the specified word
+        triggerTime = wtimes[wordIndex];
+      } else {
+        // Fallback: trigger at the end of all words
+        const lastIndex = words.length - 1;
+        triggerTime = wtimes[lastIndex] + wdurations[lastIndex];
+      }
+      
+      // Schedule gesture animation
+      const delay = Math.max(0, triggerTime - 50); // Start slightly before the trigger point
+      setTimeout(() => {
+        // Check if we have a fast gesture
+        const fastBodyGesture = this.fastBodyGestures[emojiChar];
+        
+        if (fastBodyGesture) {
+          // Ultra-fast path for common gestures
+          this.gestureQueue.push(this.animFactory(fastBodyGesture));
+        } else {
+          // Fallback to splitting for complex emojis
+          const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate(emoji);
+          
+          // Add body animation
+          if (Object.keys(bodyTemplate.vs).length > 0) {
+            this.gestureQueue.push(this.animFactory(bodyTemplate));
+          }
+          
+          // Add face animation only if not speaking (shouldn't happen during speech)
+          if (Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking) {
+            this.lookAtCamera(500);
+            this.animQueue.push(this.animFactory(faceTemplate));
+          }
+        }
+      }, delay);
+    });
+  }
+
+  /**
    * Split animation template into body and face components
    * @param {Object} template Animation template
    * @return {Object} Object with bodyTemplate and faceTemplate properties
@@ -2928,6 +2981,8 @@ class TalkingHead {
     let markId = 0; // SSML mark id
     let ttsSentence = []; // Text-to-speech sentence
     let lipsyncAnim = []; // Lip-sync animation sequence
+    let emojiTimingMap = []; // Track emojis and their word positions for timing sync
+    let wordIndex = 0; // Current word index for emoji timing
     const letters = Array.from(this.segmenter.segment(s), x => x.segment);
     for( let i=0; i<letters.length; i++ ) {
       const isLast = i === (letters.length-1);
@@ -2964,6 +3019,7 @@ class TalkingHead {
               mark: markId,
               word: textWord
             });
+            wordIndex++; // Increment word index for emoji timing tracking
           }
         }
 
@@ -3011,6 +3067,7 @@ class TalkingHead {
             anim: lipsyncAnim
           };
           if ( onsubtitles ) o.onSubtitles = onsubtitles;
+          if ( emojiTimingMap.length ) o.emojiTimingMap = [...emojiTimingMap]; // Pass emoji timing data
           if ( ttsSentence.length && !opt.avatarMute ) {
             o.text = ttsSentence;
             if ( opt.avatarMood ) o.mood = opt.avatarMood;
@@ -3027,14 +3084,21 @@ class TalkingHead {
           textWord = '';
           markId = 0;
           lipsyncAnim = [];
+          emojiTimingMap = []; // Reset emoji timing map for next sentence
+          wordIndex = 0; // Reset word index for next sentence
         }
 
-        // Send emoji, if the divider was a known emoji
+        // Track emoji position for timing sync (don't add to speech queue to avoid interruptions)
         if ( isEmoji ) {
           let emoji = this.animEmojis[letters[i]];
           if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
           if ( emoji ) {
-            this.speechQueue.push( { emoji: emoji, emojiChar: letters[i] } );
+            emojiTimingMap.push({
+              emoji: emoji,
+              emojiChar: letters[i],
+              wordIndex: wordIndex, // Position relative to current word index
+              position: 'after' // Emoji appears after this word index
+            });
           }
         }
 
@@ -3281,6 +3345,11 @@ class TalkingHead {
       }
     }
 
+    // Process emoji timing synchronization
+    if ( r.emojiTimingMap && r.emojiTimingMap.length && r.words && r.wtimes ) {
+      this.scheduleEmojiGestures(r.emojiTimingMap, r.words, r.wtimes, r.wdurations);
+    }
+
     if ( onsubtitles ) {
       o.onSubtitles = onsubtitles;
     }
@@ -3369,34 +3438,7 @@ class TalkingHead {
     this.isSpeaking = true;
     if ( this.speechQueue.length ) {
       let line = this.speechQueue.shift();
-      if ( line.emoji ) {
-
-        // Check if this is a common body gesture that we can process ultra-fast
-        const emojiChar = line.emojiChar;
-        const fastBodyGesture = this.fastBodyGestures[emojiChar];
-        
-        if ( fastBodyGesture ) {
-          // Ultra-fast path: directly add pre-computed body gesture
-          this.gestureQueue.push( this.animFactory( fastBodyGesture ) );
-        } else {
-          // Fallback to slower splitting for complex emojis
-          setTimeout(() => {
-            const { bodyTemplate, faceTemplate } = this.splitAnimationTemplate( line.emoji );
-            
-            if ( Object.keys(bodyTemplate.vs).length > 0 ) {
-              this.gestureQueue.push( this.animFactory( bodyTemplate ) );
-            }
-            
-            if ( Object.keys(faceTemplate.vs).length > 0 && !this.isSpeaking ) {
-              this.lookAtCamera(500);
-              this.animQueue.push( this.animFactory( faceTemplate ) );
-            }
-          }, 0);
-        }
-
-        // Continue immediately to process next item in queue
-        this.startSpeaking(true);
-      } else if ( line.break ) {
+      if ( line.break ) {
         // Break
         setTimeout( this.startSpeaking.bind(this), line.break, true );
       } else if ( line.audio ) {

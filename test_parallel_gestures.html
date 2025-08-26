@@ -27,6 +27,7 @@
         
         <div>
             <button onclick="testSpeechWithGestures()">Test: Speech + Gestures</button>
+            <button onclick="testGermanExample()">Test: German Example</button>
             <button onclick="testGestureEmojis()">Test: Gesture Emojis</button>
             <button onclick="testDirectGestures()">Test: Direct Gestures</button>
         </div>
@@ -97,8 +98,13 @@
         }
         
         window.testSpeechWithGestures = function() {
-            console.log("Testing speech with gestures...");
-            avatar.speakText("Hello there! 👋 I can now speak and gesture at the same time! 👍 This is amazing! 👉 Watch me point while talking! 🤷‍♂️");
+            console.log("Testing speech with synchronized gestures...");
+            avatar.speakText("Hello there! 👋 I can now speak and gesture at the same time! 👍 This is amazing! 👉 Watch me point while talking! 🤷‍♂️ Perfect synchronization!");
+        };
+        
+        window.testGermanExample = function() {
+            console.log("Testing German example with synchronized timing...");
+            avatar.speakText("Schau mal 👉 links und schau mal 👈 rechts. 🤷‍♂️Ich weiss es auch nicht. 🙏Gott sei Dank.");
         };
         
         window.testGestureEmojis = function() {
