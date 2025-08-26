@@ -758,17 +758,20 @@ class TalkingHead {
     this.faceBlockingProps = ['mouth', 'jaw', 'viseme_', 'tongue']; // Properties that interfere with lipsync
     this.faceSafeProps = ['eyeContact', 'headMove', 'headRotateX', 'headRotateY', 'headRotateZ', 'pose', 'eyeBlinkLeft', 'eyeBlinkRight', 'bodyRotateX', 'bodyRotateZ']; // Can coexist with speech
     
-    // Pre-computed body-only versions of common gesture emojis for fast processing
+    // Gesture speed multiplier (0.5 = 2x faster, 2.0 = 2x slower)
+    this.gestureSpeedMultiplier = 0.6; // Make gestures 40% faster by default
+    
+    // Pre-computed body-only versions of common gesture emojis for fast processing (faster timings)
     this.fastBodyGestures = {
-      '👉': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["pointright",2],null] } },
-      '👈': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["pointleft",2],null] } },
-      '👋': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
-      '✋': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
-      '🤚': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["handup",2],null] } },
-      '👍': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["thumbup",2],null] } },
-      '👌': { dt: [300,2000], rescale: [0,1], vs: { gesture: [["ok",2],null] } },
-      '🤷‍♂️': { dt: [1000,1500], rescale: [0,1], vs: { gesture: [["shrug",2],null] } },
-      '🙏': { dt: [1500,300,1000], rescale: [0,1,0], vs: { bodyRotateX: [0], bodyRotateZ: [0.1], gesture: [["namaste",2],null] } }
+      '👉': { dt: [200,800], rescale: [0,1], vs: { gesture: [["pointright",2],null] } },
+      '👈': { dt: [200,800], rescale: [0,1], vs: { gesture: [["pointleft",2],null] } },
+      '👋': { dt: [200,800], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
+      '✋': { dt: [200,800], rescale: [0,1], vs: { gesture: [["handup",2,true],null] } },
+      '🤚': { dt: [200,800], rescale: [0,1], vs: { gesture: [["handup",2],null] } },
+      '👍': { dt: [200,800], rescale: [0,1], vs: { gesture: [["thumbup",2],null] } },
+      '👌': { dt: [200,800], rescale: [0,1], vs: { gesture: [["ok",2],null] } },
+      '🤷‍♂️': { dt: [400,700], rescale: [0,1], vs: { gesture: [["shrug",2],null] } },
+      '🙏': { dt: [500,200,500], rescale: [0,1,0], vs: { bodyRotateX: [0], bodyRotateZ: [0.1], gesture: [["namaste",2],null] } }
     };
 
     // Clock
@@ -2164,6 +2167,21 @@ class TalkingHead {
 
 
   /**
+   * Apply speed multiplier to animation timing
+   * @param {Object} template Animation template with dt array
+   * @param {number} speedMultiplier Speed multiplier (0.5 = 2x faster, 2.0 = 2x slower)
+   * @return {Object} Template with adjusted timing
+   */
+  applyAnimationSpeed(template, speedMultiplier = 1.0) {
+    if (!template.dt || speedMultiplier === 1.0) return template;
+    
+    return {
+      ...template,
+      dt: template.dt.map(duration => duration * speedMultiplier)
+    };
+  }
+
+  /**
    * Check if an animation property is body-only (gestures, body movement)
    * @param {string} prop Animation property name
    * @return {boolean} True if body-only property
@@ -3153,12 +3171,29 @@ class TalkingHead {
     let emoji = this.animEmojis[em];
     if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
     if ( emoji ) {
-      // Split and play only body components immediately
-      const { bodyTemplate } = this.splitAnimationTemplate( emoji );
-      if ( Object.keys(bodyTemplate.vs).length > 0 ) {
-        this.gestureQueue.push( this.animFactory( bodyTemplate ) );
+      // Check for fast gesture first
+      const fastGesture = this.fastBodyGestures[em];
+      if (fastGesture) {
+        const speedAdjustedGesture = this.applyAnimationSpeed(fastGesture, this.gestureSpeedMultiplier);
+        this.gestureQueue.push( this.animFactory( speedAdjustedGesture ) );
+      } else {
+        // Split and play body components with speed adjustment
+        const { bodyTemplate } = this.splitAnimationTemplate( emoji );
+        if ( Object.keys(bodyTemplate.vs).length > 0 ) {
+          const speedAdjustedGesture = this.applyAnimationSpeed(bodyTemplate, this.gestureSpeedMultiplier);
+          this.gestureQueue.push( this.animFactory( speedAdjustedGesture ) );
+        }
       }
     }
+  }
+
+  /**
+   * Set the speed multiplier for gesture animations
+   * @param {number} speedMultiplier Speed multiplier (0.5 = 2x faster, 2.0 = 2x slower)
+   */
+  setGestureSpeed(speedMultiplier) {
+    this.gestureSpeedMultiplier = Math.max(0.1, Math.min(5.0, speedMultiplier)); // Clamp between 0.1x and 5.0x
+    console.log(`Gesture speed set to ${this.gestureSpeedMultiplier}x`);
   }
 
   /**
@@ -3587,12 +3622,16 @@ class TalkingHead {
                     
                     if (fastBodyGesture) {
                       console.log(`Adding fast gesture ${emojiChar} to queue`);
-                      this.gestureQueue.push(this.animFactory(fastBodyGesture));
+                      // Apply gesture speed multiplier to fast gestures
+                      const speedAdjustedGesture = this.applyAnimationSpeed(fastBodyGesture, this.gestureSpeedMultiplier);
+                      this.gestureQueue.push(this.animFactory(speedAdjustedGesture));
                     } else {
                       const { bodyTemplate } = this.splitAnimationTemplate(emoji);
                       if (Object.keys(bodyTemplate.vs).length > 0) {
                         console.log(`Adding body template gesture ${emojiChar} to queue`);
-                        this.gestureQueue.push(this.animFactory(bodyTemplate));
+                        // Apply gesture speed multiplier to complex gestures
+                        const speedAdjustedGesture = this.applyAnimationSpeed(bodyTemplate, this.gestureSpeedMultiplier);
+                        this.gestureQueue.push(this.animFactory(speedAdjustedGesture));
                       }
                     }
                   }, triggerTime + this.opt.ttsTrimStart);
@@ -4315,7 +4354,7 @@ class TalkingHead {
   * Get slowdown.
   * @return {numeric} Slowdown factor.
   */
-  getSlowdownRate(k) {
+  getSlowdownRate() {
     return this.animSlowdownRate;
   }
 
