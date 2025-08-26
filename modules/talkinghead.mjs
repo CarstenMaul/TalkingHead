@@ -2973,8 +2973,8 @@ class TalkingHead {
   speakText(s, opt = null, onsubtitles = null, excludes = null ) {
     opt = opt || {};
 
-    // Classifiers
-    const dividersSentence = /[!\.\?\n\p{Extended_Pictographic}]/ug;
+    // Classifiers (removed emojis from sentence dividers to prevent audio pauses)
+    const dividersSentence = /[!\.\?\n]/ug;
     const dividersWord = /[ ]/ug;
     const speakables = /[\p{L}\p{N},\.\p{Quotation_Mark}!€\$\+\p{Dash_Punctuation}%&\?]/ug;
     const emojis = /[\p{Extended_Pictographic}]/ug;
