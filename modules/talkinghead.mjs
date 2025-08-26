@@ -2987,6 +2987,7 @@ class TalkingHead {
     let lipsyncAnim = []; // Lip-sync animation sequence
     let emojiTimingMap = []; // Track emojis and their word positions for timing sync
     let wordIndex = 0; // Current word index for emoji timing
+    let globalWordIndex = 0; // Global word count across entire text for emoji timing
     const letters = Array.from(this.segmenter.segment(s), x => x.segment);
     for( let i=0; i<letters.length; i++ ) {
       const isLast = i === (letters.length-1);
@@ -3024,6 +3025,7 @@ class TalkingHead {
               word: textWord
             });
             wordIndex++; // Increment word index for emoji timing tracking
+            globalWordIndex++; // Increment global word count
           }
         }
 
@@ -3100,11 +3102,11 @@ class TalkingHead {
           let emoji = this.animEmojis[letters[i]];
           if ( emoji && emoji.link ) emoji = this.animEmojis[emoji.link];
           if ( emoji ) {
-            console.log(`Tracking emoji ${letters[i]} at word index ${wordIndex}`);
+            console.log(`Tracking emoji ${letters[i]} at global word index ${globalWordIndex}`);
             emojiTimingMap.push({
               emoji: emoji,
               emojiChar: letters[i],
-              wordIndex: wordIndex, // Position relative to current word index
+              wordIndex: globalWordIndex, // Position relative to global word index
               position: 'after' // Emoji appears after this word index
             });
           }
