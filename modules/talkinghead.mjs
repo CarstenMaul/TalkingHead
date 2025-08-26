@@ -3075,7 +3075,14 @@ class TalkingHead {
           if ( onsubtitles ) o.onSubtitles = onsubtitles;
           if ( emojiTimingMap.length ) {
             console.log('Adding emoji timing map to speech queue:', emojiTimingMap);
-            o.emojiTimingMap = [...emojiTimingMap]; // Pass emoji timing data
+            // Calculate word offset for this sentence (how many words came before this sentence)
+            const sentenceWordOffset = globalWordIndex - wordIndex;
+            o.emojiTimingMap = emojiTimingMap.map(emoji => ({
+              ...emoji,
+              localWordIndex: emoji.wordIndex - sentenceWordOffset, // Convert global to local sentence word index
+              globalWordIndex: emoji.wordIndex // Keep original for debugging
+            }));
+            console.log('Adjusted emoji timing map:', o.emojiTimingMap);
           }
           if ( ttsSentence.length && !opt.avatarMute ) {
             o.text = ttsSentence;
@@ -3564,15 +3571,15 @@ class TalkingHead {
             if (line.emojiTimingMap) {
               console.log('Scheduling emoji gestures with timepoints:', { timepoints, emojiMap: line.emojiTimingMap, words: line.text });
               line.emojiTimingMap.forEach(emojiData => {
-                const { emoji, emojiChar, wordIndex } = emojiData;
+                const { emoji, emojiChar, localWordIndex, globalWordIndex } = emojiData;
                 
-                // Map wordIndex to timepoint (each word gets a mark)
-                if (wordIndex < timepoints.length) {
-                  const timepoint = timepoints[wordIndex];
+                // Use localWordIndex to map to timepoint in this sentence
+                if (localWordIndex < timepoints.length && localWordIndex >= 0) {
+                  const timepoint = timepoints[localWordIndex];
                   // Trigger gesture slightly after word starts
                   const triggerTime = timepoint.time + (timepoint.duration * 0.7); // 70% through the word
                   
-                  console.log(`Scheduling ${emojiChar} at ${triggerTime}ms (word ${wordIndex})`);
+                  console.log(`Scheduling ${emojiChar} at ${triggerTime}ms (local word ${localWordIndex}, global word ${globalWordIndex})`);
                   setTimeout(() => {
                     console.log(`Triggering ${emojiChar} gesture now`);
                     const fastBodyGesture = this.fastBodyGestures[emojiChar];
@@ -3588,6 +3595,8 @@ class TalkingHead {
                       }
                     }
                   }, triggerTime + this.opt.ttsTrimStart);
+                } else {
+                  console.log(`Skipping ${emojiChar} - localWordIndex ${localWordIndex} out of range (timepoints: ${timepoints.length})`);
                 }
               });
             }
