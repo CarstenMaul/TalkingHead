@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Talking Head - minimal example</title>
+
+  <style>
+    body, html { width:100%; height:100%; margin: auto; position: relative; background-color: #202020; color: white; }
+    #avatar { display: block; width:100%; height:100%; }
+    #controls { display: block; position: absolute; top: 10px; left: 10px; right: 10px; height: 140px; }
+    #text { position: absolute; width: Calc( 100% - 110px ); height: 30px; top: 0; left: 0; right: 110px; font-family: Arial; font-size: 16px; }
+    #speak { display: block; position: absolute; top: 0; right: 0; height: 30px; width: 100px; font-family: Arial; font-size: 16px; }
+    #chatQuestion { position: absolute; width: Calc( 100% - 220px ); height: 30px; top: 40px; left: 0; right: 220px; font-family: Arial; font-size: 16px; }
+    #askButton { display: block; position: absolute; top: 40px; right: 110px; height: 30px; width: 100px; font-family: Arial; font-size: 16px; }
+    #resetButton { display: block; position: absolute; top: 40px; right: 0; height: 30px; width: 100px; font-family: Arial; font-size: 16px; }
+    #speechStatus { position: absolute; top: 80px; left: 0; height: 20px; font-family: Arial; font-size: 12px; color: #888; }
+    #chatHistory { position: absolute; top: 100px; left: 0; right: 0; height: 30px; font-family: Arial; font-size: 12px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 3px; }
+    #loading { display: block; position: absolute; bottom: 10px; left: 10px; right: 10px; height: 50px; font-family: Arial; font-size: 20px; }
+    .user-message { color: #88ff88; }
+    .ai-message { color: #8888ff; }
+  </style>
+
+  <script type="importmap">
+  { "imports":
+    {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js/+esm",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "talkinghead": "../modules/talkinghead.mjs",
+      "config": "./config.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { TalkingHead } from "talkinghead";
+    import { config } from "config";
+
+    let head;
+    let chatHistory = [];
+    let appPrompt = '';
+    let currentResponse = '';
+    let isProcessingResponse = false;
+    let speechWebSocket = null;
+    let reconnectInterval = null;
+    let audioContextInitialized = false;
+
+    // Load app prompt
+    async function loadAppPrompt() {
+      try {
+        const response = await fetch('./appprompt.md');
+        appPrompt = await response.text();
+      } catch (error) {
+        console.log('Could not load app prompt:', error);
+        appPrompt = 'You are a helpful AI assistant.';
+      }
+    }
+
+    // Update chat history display
+    function updateChatHistory() {
+      const chatHistoryDiv = document.getElementById('chatHistory');
+      chatHistoryDiv.innerHTML = '';
+      chatHistory.forEach(msg => {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = msg.role === 'user' ? 'user-message' : 'ai-message';
+        msgDiv.textContent = `${msg.role === 'user' ? 'You' : 'AI'}: ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}`;
+        chatHistoryDiv.appendChild(msgDiv);
+      });
+      chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+    }
+
+    // Process and speak sentences as they come in
+    function processSentence(sentence) {
+      if (sentence.trim() && head && !isProcessingResponse) {
+        isProcessingResponse = true;
+        try {
+          const result = head.speakText(sentence.trim());
+          if (result && typeof result.then === 'function') {
+            result.then(() => {
+              isProcessingResponse = false;
+            }).catch(() => {
+              isProcessingResponse = false;
+            });
+          } else {
+            // If speakText doesn't return a promise, reset the flag after a short delay
+            setTimeout(() => {
+              isProcessingResponse = false;
+            }, 100);
+          }
+        } catch (error) {
+          console.log('Speech error:', error);
+          isProcessingResponse = false;
+        }
+      }
+    }
+
+    // Send message to OpenRouter API with streaming
+    async function sendChatMessage(question) {
+      const messages = [...chatHistory];
+      
+      // Add app prompt to the first message if this is the start of conversation
+      if (messages.length === 0) {
+        messages.push({ role: 'system', content: appPrompt });
+      }
+      
+      messages.push({ role: 'user', content: question });
+      
+      try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.openrouterApikey}`,
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'TalkingHead Chat'
+          },
+          body: JSON.stringify({
+            model: 'openai/gpt-5-chat',
+            messages: messages,
+            stream: true,
+            temperature: 0.7
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        currentResponse = '';
+        let buffer = '';
+        
+        chatHistory.push({ role: 'user', content: question });
+        updateChatHistory();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') {
+                if (currentResponse) {
+                  chatHistory.push({ role: 'assistant', content: currentResponse });
+                  updateChatHistory();
+                }
+                return;
+              }
+              
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  currentResponse += delta;
+                  buffer += delta;
+                  
+                  // Check for sentence endings and process them with robust detection
+                  const processedSentences = extractSentences(buffer);
+                  
+                  if (processedSentences.sentences.length > 0) {
+                    processedSentences.sentences.forEach(sentence => {
+                      if (sentence.trim()) {
+                        processSentence(sentence.trim());
+                      }
+                    });
+                    buffer = processedSentences.remaining;
+                  }
+                }
+              } catch (parseError) {
+                console.log('Parse error:', parseError);
+              }
+            }
+          }
+        }
+        
+        // Process any remaining text
+        if (buffer.trim()) {
+          processSentence(buffer);
+        }
+        
+        if (currentResponse) {
+          chatHistory.push({ role: 'assistant', content: currentResponse });
+          updateChatHistory();
+        }
+        
+      } catch (error) {
+        console.error('Chat error:', error);
+        const errorMessage = 'Sorry, I encountered an error: ' + error.message;
+        head.speakText(errorMessage);
+      }
+    }
+
+    // Reset chat function
+    function resetChat() {
+      chatHistory = [];
+      currentResponse = '';
+      updateChatHistory();
+    }
+
+    // Update speech service connection status
+    function updateSpeechStatus(status, color = '#888') {
+      const statusDiv = document.getElementById('speechStatus');
+      if (statusDiv) {
+        statusDiv.textContent = status;
+        statusDiv.style.color = color;
+      }
+    }
+
+    // Connect to speech diarization service
+    function connectToSpeechService() {
+      try {
+        speechWebSocket = new WebSocket('ws://localhost:8000/external');
+        
+        speechWebSocket.onopen = () => {
+          console.log('Connected to speech diarization service');
+          updateSpeechStatus('🟢 Speech service connected', '#4CAF50');
+          
+          if (reconnectInterval) {
+            clearInterval(reconnectInterval);
+            reconnectInterval = null;
+          }
+        };
+
+        speechWebSocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleSpeechMessage(data);
+          } catch (error) {
+            console.error('Error parsing speech message:', error);
+          }
+        };
+
+        speechWebSocket.onclose = () => {
+          console.log('Disconnected from speech diarization service');
+          updateSpeechStatus('🔴 Speech service disconnected', '#f44336');
+          speechWebSocket = null;
+          
+          // Auto-reconnect after 5 seconds
+          if (!reconnectInterval) {
+            reconnectInterval = setInterval(() => {
+              console.log('Attempting to reconnect to speech service...');
+              connectToSpeechService();
+            }, 5000);
+          }
+        };
+
+        speechWebSocket.onerror = (error) => {
+          console.error('Speech WebSocket error:', error);
+          updateSpeechStatus('⚠️ Speech service error', '#ff9800');
+        };
+
+      } catch (error) {
+        console.error('Failed to connect to speech service:', error);
+        updateSpeechStatus('❌ Cannot connect to speech service', '#f44336');
+      }
+    }
+
+    // Handle messages from speech diarization service
+    function handleSpeechMessage(data) {
+      switch (data.type) {
+        case 'connected':
+          console.log('Speech service connected:', data.message);
+          updateSpeechStatus('🟢 Speech service ready', '#4CAF50');
+          break;
+          
+        case 'transcript':
+          console.log('Received transcript:', data);
+          // Automatically send the transcript as a chat message
+          const transcriptText = data.text.trim();
+          if (transcriptText) {
+            // Add speaker info to make it clear this came from speech
+            const formattedMessage = `[${data.speaker_name || data.speaker}]: ${transcriptText}`;
+            sendChatMessage(formattedMessage);
+          }
+          break;
+          
+        case 'pong':
+          console.log('Pong received from speech service');
+          break;
+          
+        default:
+          console.warn('Unknown speech message type:', data.type);
+      }
+    }
+
+    // Send keep-alive ping to speech service
+    function sendSpeechPing() {
+      if (speechWebSocket && speechWebSocket.readyState === WebSocket.OPEN) {
+        speechWebSocket.send(JSON.stringify({ type: 'ping' }));
+      }
+    }
+
+    // Initialize audio context with user gesture
+    async function initializeAudioContext() {
+      if (!audioContextInitialized && head) {
+        try {
+          // Try to trigger TalkingHead's audio initialization with a silent speak
+          await head.speakText(''); // Empty string should initialize audio without playing anything
+          audioContextInitialized = true;
+          console.log('Audio context initialized');
+        } catch (error) {
+          console.log('Audio context initialization attempt:', error);
+          // Fallback - try speaking a very short silent audio
+          try {
+            await head.speakText(' '); // Single space
+            audioContextInitialized = true;
+            console.log('Audio context initialized with fallback');
+          } catch (fallbackError) {
+            console.log('Audio context initialization failed:', fallbackError);
+          }
+        }
+      }
+    }
+
+    // Robust sentence extraction function
+    function extractSentences(text) {
+      const sentences = [];
+      let remaining = text;
+      
+      // Common abbreviations that shouldn't end sentences
+      const abbreviations = /\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr|vs|etc|Inc|Ltd|Corp|Co|St|Ave|Blvd|Rd|Ph\.D|M\.D|B\.A|M\.A|U\.S|U\.K|U\.N|e\.g|i\.e|a\.m|p\.m|No|Vol|Ch|Fig|Eq|Ref|approx|min|max|dept|govt|assoc|org|admin)\./gi;
+      
+      // Decimal number pattern
+      const decimalPattern = /\d+\.\d+/g;
+      
+      // URL pattern (simplified)
+      const urlPattern = /https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?/g;
+      
+      // Ellipsis pattern
+      const ellipsisPattern = /\.{2,}/g;
+      
+      // Replace problematic patterns with placeholders
+      const placeholders = [];
+      let placeholderIndex = 0;
+      
+      // Store abbreviations
+      remaining = remaining.replace(abbreviations, (match) => {
+        const placeholder = `__ABBR_${placeholderIndex}__`;
+        placeholders[placeholderIndex] = match;
+        placeholderIndex++;
+        return placeholder;
+      });
+      
+      // Store decimal numbers
+      remaining = remaining.replace(decimalPattern, (match) => {
+        const placeholder = `__DECIMAL_${placeholderIndex}__`;
+        placeholders[placeholderIndex] = match;
+        placeholderIndex++;
+        return placeholder;
+      });
+      
+      // Store URLs
+      remaining = remaining.replace(urlPattern, (match) => {
+        const placeholder = `__URL_${placeholderIndex}__`;
+        placeholders[placeholderIndex] = match;
+        placeholderIndex++;
+        return placeholder;
+      });
+      
+      // Store ellipsis
+      remaining = remaining.replace(ellipsisPattern, (match) => {
+        const placeholder = `__ELLIPSIS_${placeholderIndex}__`;
+        placeholders[placeholderIndex] = match;
+        placeholderIndex++;
+        return placeholder;
+      });
+      
+      // Now split on sentence endings, including colons and semicolons in dialogue
+      const sentencePattern = /([^.!?:;\n]*[.!?:;\n]+)/g;
+      let match;
+      let lastIndex = 0;
+      
+      while ((match = sentencePattern.exec(remaining)) !== null) {
+        let sentence = match[1];
+        
+        // Restore placeholders
+        for (let i = 0; i < placeholders.length; i++) {
+          if (placeholders[i]) {
+            sentence = sentence.replace(new RegExp(`__(?:ABBR|DECIMAL|URL|ELLIPSIS)_${i}__`, 'g'), placeholders[i]);
+          }
+        }
+        
+        // Check if this looks like a complete sentence
+        const trimmedSentence = sentence.trim();
+        if (trimmedSentence.length > 0) {
+          // Additional validation for sentence completeness
+          const endsWithValidPunctuation = /[.!?:;\n]\s*$/.test(trimmedSentence);
+          const hasMinimumWords = trimmedSentence.split(/\s+/).length >= 2 || /[.!?]/.test(trimmedSentence);
+          
+          if (endsWithValidPunctuation && hasMinimumWords) {
+            sentences.push(sentence);
+            lastIndex = match.index + match[0].length;
+          }
+        }
+      }
+      
+      // Get remaining text after last processed sentence
+      let remainingText = remaining.substring(lastIndex);
+      
+      // Restore placeholders in remaining text
+      for (let i = 0; i < placeholders.length; i++) {
+        if (placeholders[i]) {
+          remainingText = remainingText.replace(new RegExp(`__(?:ABBR|DECIMAL|URL|ELLIPSIS)_${i}__`, 'g'), placeholders[i]);
+        }
+      }
+      
+      return {
+        sentences: sentences,
+        remaining: remainingText
+      };
+    }
+
+    document.addEventListener('DOMContentLoaded', async function(e) {
+      await loadAppPrompt();
+
+      // Initialize speech service connection
+      updateSpeechStatus('⏳ Connecting to speech service...', '#ff9800');
+      connectToSpeechService();
+
+      // Set up keep-alive ping every 30 seconds
+      setInterval(sendSpeechPing, 30000);
+
+      // Instantiate the class
+      // NOTE: Never put your API key in a client-side code unless you know
+      //       that you are the only one to have access to that code!
+      const nodeAvatar = document.getElementById('avatar');
+      head = new TalkingHead( nodeAvatar, {
+        ttsEndpoint: "https://eu-texttospeech.googleapis.com/v1beta1/text:synthesize",
+        ttsApikey: config.ttsApikey,
+        lipsyncModules: ["en", "fi","de"],
+        cameraView: "upper",
+        cameraRotateEnable: false,
+        cameraDistance: 0.3,
+        cameraY: 0.2,
+        
+        // Enhanced lighting for realism
+        lightAmbientIntensity: 1.2,        // Softer ambient light
+        lightDirectColor: 0xffffff,        // Pure white directional light
+        lightDirectIntensity: 18,          // Reduced intensity
+        lightDirectPhi: 0.8,               // Better angle for face lighting
+        lightDirectTheta: 1.5,
+        
+        // Add spot light for depth
+        lightSpotIntensity: 10,            // Reduced spot lighting
+        lightSpotColor: 0xffffee,          // Warm white
+        lightSpotPhi: 0.3,
+        lightSpotTheta: 3.5,
+        lightSpotDispersion: 0.8,
+        
+        // Higher quality rendering
+        modelPixelRatio: 1.5               // Increase resolution
+      });
+
+      // Load and show the avatar
+      const nodeLoading = document.getElementById('loading');
+      try {
+        nodeLoading.textContent = "Loading...";
+        await head.showAvatar( {
+          url: 'https://models.readyplayer.me/64bfa15f0e72c63d7c3934a6.glb?morphTargets=ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown&textureSizeLimit=1024&textureFormat=png',
+          body: 'F',
+          avatarMood: 'neutral',
+          ttsLang: "de-DE",
+          ttsVoice: "de-DE-Standard-G",
+          lipsyncLang: 'de'
+        }, (ev) => {
+          if ( ev.lengthComputable ) {
+            let val = Math.min(100,Math.round(ev.loaded/ev.total * 100 ));
+            nodeLoading.textContent = "Loading " + val + "%";
+          }
+        });
+        nodeLoading.style.display = 'none';
+      } catch (error) {
+        console.log(error);
+        nodeLoading.textContent = error.toString();
+      }
+
+      // Speak when clicked
+      const nodeSpeak = document.getElementById('speak');
+      nodeSpeak.addEventListener('click', async function () {
+        try {
+          await initializeAudioContext();
+          const text = document.getElementById('text').value;
+          if ( text ) {
+            head.speakText( text );
+          }
+        } catch (error) {
+          console.log(error);
+        }
+      });
+
+      // Ask question when clicked
+      const askButton = document.getElementById('askButton');
+      askButton.addEventListener('click', async function () {
+        await initializeAudioContext();
+        const question = document.getElementById('chatQuestion').value;
+        if (question.trim()) {
+          document.getElementById('chatQuestion').value = '';
+          await sendChatMessage(question);
+        }
+      });
+
+      // Reset chat when clicked
+      const resetButton = document.getElementById('resetButton');
+      resetButton.addEventListener('click', function () {
+        resetChat();
+      });
+
+      // Enter key support for chat question
+      document.getElementById('chatQuestion').addEventListener('keypress', async function(e) {
+        if (e.key === 'Enter') {
+          await initializeAudioContext();
+          const question = this.value;
+          if (question.trim()) {
+            this.value = '';
+            await sendChatMessage(question);
+          }
+        }
+      });
+
+      // Initialize audio context on any user interaction
+      document.addEventListener('click', async function () {
+        await initializeAudioContext();
+      }, { once: true });
+
+      // Also try to initialize on any key press
+      document.addEventListener('keydown', async function () {
+        await initializeAudioContext();
+      }, { once: true });
+
+      // Pause animation when document is not visible
+      document.addEventListener("visibilitychange", async function (ev) {
+        if (document.visibilityState === "visible") {
+          head.start();
+        } else {
+          head.stop();
+        }
+      });
+
+    });
+
+  </script>
+</head>
+
+<body>
+  <div id="avatar"></div>
+  <div id="controls">
+    <input id="text" type="text" value="Hi there. How are you? I'm fine.">
+    <input id="speak" type="button" value="Speak">
+    <input id="chatQuestion" type="text" placeholder="Ask a question...">
+    <input id="askButton" type="button" value="Ask">
+    <input id="resetButton" type="button" value="Reset">
+    <div id="speechStatus">⏳ Connecting to speech service...</div>
+    <div id="chatHistory"></div>
+  </div>
+  <div id="loading"></div>
+</body>
+
+</html>
